@@ -1,112 +1,90 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="UTF-8">
-  <title>Microphone Permission Bridge</title>
-  <style>
-    body { 
-      font-family: system-ui, -apple-system, sans-serif; 
-      text-align: center; 
-      padding: 40px 20px; 
-      background: #f8fafc; 
-      color: #334155; 
-      margin: 0;
-    }
-    .status-card { 
-      background: white; 
-      max-width: 400px; 
-      margin: 40px auto; 
-      padding: 30px; 
-      border-radius: 12px; 
-      box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
-    }
-    .indicator { 
-      width: 16px; 
-      height: 16px; 
-      border-radius: 50%; 
-      background: #cbd5e1; 
-      display: inline-block; 
-      margin-right: 8px;
-      vertical-align: middle;
-    }
-    .status-wrapper {
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin-top: 20px;
-      font-weight: 500;
-    }
-    .recording { 
-      background: #ef4444 !important; 
-      animation: pulse 1s infinite alternate; 
-    }
-    @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
-  </style>
+    <title>Microphone & Speech Permission Bridge</title>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background: #fafafa; color: #333; }
+        .status-box { padding: 15px; border-radius: 5px; background: #eef4ff; border: 1px solid #b2d0ff; font-weight: bold; margin-bottom: 15px; }
+        .live-box { font-size: 18px; font-weight: bold; color: #d0342c; margin-top: 10px; min-height: 24px; }
+    </style>
 </head>
 <body>
-  <div class="status-card">
-    <h2> An unofficial practice tool</h2>
-    <div class="status-wrapper">
-      <div id="ind" class="indicator"></div>
-      <span id="info">Waiting for practice portal...</span>
-    </div>
-  </div>
+    <h3>Portal Communication Pipeline</h3>
+    <div id="status" class="status-box">Connecting to main workspace portal...</div>
+    <div id="liveSpeech" class="live-box"></div>
 
-  <script>
-    let mediaRecorder;
-    let audioChunks = [];
-    let appScriptWindow = null;
+    <script>
+        let recognition = null;
+        let finalTranscript = "";
+        let speechActive = false;
+        const portalSource = window.opener;
 
-    window.addEventListener("message", async (event) => {
-      appScriptWindow = event.source;
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechLib = window.SpeechRecognition || window.webkitSpeechRecognition;
+            recognition = new SpeechLib();
+            
+            recognition.continuous = true; 
+            recognition.interimResults = false;
 
-      if (event.data.command === "INIT_MIC") {
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          document.getElementById("info").innerText = "Connected to Google Sheet. Ready!";
-          document.getElementById("ind").style.backgroundColor = "#22c55e";
-          
-          appScriptWindow.postMessage({ status: "MIC_READY" }, "*");
-          stream.getTracks().forEach(t => t.stop()); 
-        } catch (err) {
-          appScriptWindow.postMessage({ status: "MIC_ERROR", error: err.message }, "*");
-        }
-      }
-
-      if (event.data.command === "START_RECORDING") {
-        audioChunks = [];
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorder = new MediaRecorder(stream);
-          mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-          
-          mediaRecorder.onstop = () => {
-            const blob = new Blob(audioChunks, { type: 'audio/wav' });
-            const reader = new FileReader();
-            reader.readAsDataURL(blob); 
-            reader.onloadend = () => {
-              appScriptWindow.postMessage({ status: "AUDIO_DATA", dataUrl: reader.result }, "*");
+            recognition.onresult = (event) => {
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript + " ";
+                    }
+                }
+                document.getElementById('liveSpeech').innerText = `Heard: "${finalTranscript.trim()}"`;
             };
-            stream.getTracks().forEach(track => track.stop());
-          };
 
-          mediaRecorder.start();
-          document.getElementById("info").innerText = "Recording active...";
-          document.getElementById("ind").className = "indicator recording";
-        } catch (err) {
-          appScriptWindow.postMessage({ status: "MIC_ERROR", error: err.message }, "*");
-        }
-      }
+            recognition.onerror = (e) => {
+                console.error("Speech API Error", e);
+                document.getElementById('status').innerText = "Recognition processing error.";
+            };
 
-      if (event.data.command === "STOP_RECORDING") {
-        if (mediaRecorder && mediaRecorder.state !== "inactive") {
-          mediaRecorder.stop();
-          document.getElementById("info").innerText = "Connected to Google Sheet. Ready!";
-          document.getElementById("ind").className = "indicator";
-          document.getElementById("ind").style.backgroundColor = "#22c55e";
+            recognition.onend = () => {
+                if (speechActive) {
+                    try { recognition.start(); } catch(e){}
+                }
+            };
+        } else {
+            document.getElementById('status').innerText = "Web Speech API not supported.";
         }
-      }
-    });
-  </script>
+
+        window.addEventListener("message", (event) => {
+            if (!event.data || !event.data.command) return;
+
+            if (event.data.command === "INIT_MIC") {
+                if (portalSource) portalSource.postMessage({ status: "MIC_READY" }, "*");
+                document.getElementById('status').innerText = "Connected to Portal Workbook. Ready.";
+            }
+
+            if (event.data.command === "START_AUTO_SPEECH" && recognition) {
+                finalTranscript = "";
+                speechActive = true;
+                document.getElementById('liveSpeech').innerText = "";
+                recognition.lang = event.data.lang || 'en-AU'; 
+                try {
+                    recognition.start();
+                    document.getElementById('status').innerText = `Listening active (${recognition.lang})...`;
+                } catch(e) { console.log(e); }
+            }
+
+            if (event.data.command === "STOP_AUTO_SPEECH" && recognition) {
+                speechActive = false;
+                try {
+                    recognition.stop();
+                } catch(e) { console.log(e); }
+                
+                setTimeout(() => {
+                    if (portalSource) {
+                        portalSource.postMessage({
+                            status: "TRANSCRIPT_OUTPUT",
+                            text: finalTranscript.trim()
+                        }, "*");
+                    }
+                    document.getElementById('status').innerText = "Speech captured! Transmitted to Sheets.";
+                }, 400); 
+            }
+        });
+    </script>
 </body>
 </html>
