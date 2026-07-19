@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Microphone Permission Bridge</title>
+  <style>
+    body { 
+      font-family: system-ui, -apple-system, sans-serif; 
+      text-align: center; 
+      padding: 40px 20px; 
+      background: #f8fafc; 
+      color: #334155; 
+      margin: 0;
+    }
+    .status-card { 
+      background: white; 
+      max-width: 400px; 
+      margin: 40px auto; 
+      padding: 30px; 
+      border-radius: 12px; 
+      box-shadow: 0 4px 15px rgba(0,0,0,0.05); 
+    }
+    .indicator { 
+      width: 16px; 
+      height: 16px; 
+      border-radius: 50%; 
+      background: #cbd5e1; 
+      display: inline-block; 
+      margin-right: 8px;
+      vertical-align: middle;
+    }
+    .status-wrapper {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-top: 20px;
+      font-weight: 500;
+    }
+    .recording { 
+      background: #ef4444 !important; 
+      animation: pulse 1s infinite alternate; 
+    }
+    @keyframes pulse { from { opacity: 0.5; } to { opacity: 1; } }
+  </style>
+</head>
+<body>
+  <div class="status-card">
+    <h2> An unofficial practice tool</h2>
+    <div class="status-wrapper">
+      <div id="ind" class="indicator"></div>
+      <span id="info">Waiting for practice portal...</span>
+    </div>
+  </div>
+
+  <script>
+    let mediaRecorder;
+    let audioChunks = [];
+    let appScriptWindow = null;
+
+    window.addEventListener("message", async (event) => {
+      appScriptWindow = event.source;
+
+      if (event.data.command === "INIT_MIC") {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          document.getElementById("info").innerText = "Connected to Google Sheet. Ready!";
+          document.getElementById("ind").style.backgroundColor = "#22c55e";
+          
+          appScriptWindow.postMessage({ status: "MIC_READY" }, "*");
+          stream.getTracks().forEach(t => t.stop()); 
+        } catch (err) {
+          appScriptWindow.postMessage({ status: "MIC_ERROR", error: err.message }, "*");
+        }
+      }
+
+      if (event.data.command === "START_RECORDING") {
+        audioChunks = [];
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream);
+          mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+          
+          mediaRecorder.onstop = () => {
+            const blob = new Blob(audioChunks, { type: 'audio/wav' });
+            const reader = new FileReader();
+            reader.readAsDataURL(blob); 
+            reader.onloadend = () => {
+              appScriptWindow.postMessage({ status: "AUDIO_DATA", dataUrl: reader.result }, "*");
+            };
+            stream.getTracks().forEach(track => track.stop());
+          };
+
+          mediaRecorder.start();
+          document.getElementById("info").innerText = "Recording active...";
+          document.getElementById("ind").className = "indicator recording";
+        } catch (err) {
+          appScriptWindow.postMessage({ status: "MIC_ERROR", error: err.message }, "*");
+        }
+      }
+
+      if (event.data.command === "STOP_RECORDING") {
+        if (mediaRecorder && mediaRecorder.state !== "inactive") {
+          mediaRecorder.stop();
+          document.getElementById("info").innerText = "Connected to Google Sheet. Ready!";
+          document.getElementById("ind").className = "indicator";
+          document.getElementById("ind").style.backgroundColor = "#22c55e";
+        }
+      }
+    });
+  </script>
+</body>
+</html>
